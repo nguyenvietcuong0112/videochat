@@ -1,13 +1,16 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:uuid/uuid.dart';
 
-import '../models/call_model.dart';
-import 'agora_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:myapp/features/video_call/models/call_model.dart';
+import 'package:myapp/features/video_call/services/agora_service.dart';
+import 'package:uuid/uuid.dart';
 
 class MatchmakingService {
   final AgoraService _agoraService = AgoraService();
-  final CollectionReference _waitingPoolCollection = FirebaseFirestore.instance.collection('waiting_pool');
-  final CollectionReference _callsCollection = FirebaseFirestore.instance.collection('calls');
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
+  late final CollectionReference _waitingPoolCollection = _firestore.collection('waiting_pool');
+  late final CollectionReference _callsCollection = _firestore.collection('calls');
+  late final CollectionReference _usersCollection = _firestore.collection('users');
 
   Stream<Call?> getCallStreamForUser(String userId) {
     return _callsCollection
@@ -24,65 +27,60 @@ class MatchmakingService {
     });
   }
 
-  Stream<DocumentSnapshot> getCallStream(String channelId) {
-      return _callsCollection.doc(channelId).snapshots();
-  }
+  Future<void> findOrStartMatch(String userId, String displayName) async {
+    // Get the current user's block list first.
+    final userDoc = await _usersCollection.doc(userId).get();
+    final userData = userDoc.data() as Map<String, dynamic>?;
+    final List<dynamic> blockedUsers = userData?['blockedUsers'] ?? [];
 
-  Future<void> joinWaitingPool(String userId, String userName) async {
-    await _waitingPoolCollection.doc(userId).set({
-      'userId': userId,
-      'userName': userName,
-      'timestamp': FieldValue.serverTimestamp(),
+    await _firestore.runTransaction((transaction) async {
+      // Find potential opponents, fetch a few to have fallbacks.
+      final QuerySnapshot waitingPool = await _waitingPoolCollection
+          .where('uid', isNotEqualTo: userId)
+          .limit(10)
+          .get();
+
+      DocumentSnapshot? opponentDoc;
+
+      // Iterate to find the first non-blocked user.
+      for (final doc in waitingPool.docs) {
+        if (!blockedUsers.contains(doc['uid'])) {
+          opponentDoc = doc;
+          break;
+        }
+      }
+
+      if (opponentDoc != null) {
+        // --- Opponent found ---
+        final opponentId = opponentDoc['uid'];
+
+        transaction.delete(opponentDoc.reference);
+        transaction.delete(_waitingPoolCollection.doc(userId));
+
+        final channelId = const Uuid().v4();
+        final token = await _agoraService.getToken(channelId, 0);
+
+        final newCall = Call(
+          channelId: channelId,
+          agoraToken: token,
+          participants: [userId, opponentId],
+          status: 'created',
+          createdAt: Timestamp.now(),
+        );
+
+        transaction.set(_callsCollection.doc(channelId), newCall.toMap());
+      } else {
+        // --- No valid opponent found, add user to the waiting pool ---
+        transaction.set(_waitingPoolCollection.doc(userId), {
+          'uid': userId,
+          'displayName': displayName,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
     });
-    await _tryToMatch(userId, userName);
   }
 
-  Future<void> leaveWaitingPool(String userId) async {
+  Future<void> cancelMatchmaking(String userId) async {
     await _waitingPoolCollection.doc(userId).delete();
-  }
-
-  Future<void> _tryToMatch(String currentUserId, String currentUserName) async {
-    final snapshot = await _waitingPoolCollection
-        .where('userId', isNotEqualTo: currentUserId)
-        .orderBy('timestamp')
-        .limit(1)
-        .get();
-
-    if (snapshot.docs.isNotEmpty) {
-      final matchedUserDoc = snapshot.docs.first;
-      final matchedUserId = matchedUserDoc.id;
-      final matchedUserName = matchedUserDoc['userName'] as String;
-
-      await _waitingPoolCollection.doc(currentUserId).delete();
-      await _waitingPoolCollection.doc(matchedUserId).delete();
-
-      await createCall(currentUserId, currentUserName, matchedUserId, matchedUserName);
-    }
-  }
-
-  Future<Call> createCall(
-      String callerId, String callerName, String receiverId, String receiverName) async {
-    final channelId = const Uuid().v4();
-    
-    final agoraToken = await _agoraService.getToken(channelId);
-
-    final call = Call(
-      channelId: channelId,
-      callerId: callerId,
-      callerName: callerName,
-      receiverId: receiverId,
-      receiverName: receiverName,
-      agoraToken: agoraToken,
-      status: 'created',
-      participants: [callerId, receiverId],
-      createdAt: Timestamp.now(),
-    );
-
-    await _callsCollection.doc(channelId).set(call.toMap());
-    return call;
-  }
-
-  Future<void> endCall(Call call) async {
-    await _callsCollection.doc(call.channelId).update({'status': 'ended'});
   }
 }

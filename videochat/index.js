@@ -59,18 +59,18 @@ exports.generateAgoraToken = functions.https.onCall(async (data, context) => {
     console.error("Invalid argument: channelName is missing.");
     throw new functions.https.HttpsError(
       "invalid-argument",
-      'The function must be called with "channelName".' // SỬA LỖI CÚ PHÁP
+      '''The function must be called with "channelName".'''
     );
   }
 
   try {
     console.log(`Building token for channel: ${channelName}, uid: ${uid}`);
     // UID trong token nên là 0 để bất kỳ ai có token đều có thể tham gia
-    const token = RtcTokenBuilder.buildTokenWithUid(
+    const token = RtcTokenBuilder.build(
       APP_ID,
       APP_CERTIFICATE,
       channelName,
-      0, 
+      "0", 
       role,
       privilegeExpiredTs
     );
@@ -106,7 +106,7 @@ exports.sendCallNotification = functions.https.onCall(async (data, context) => {
     console.error("Invalid arguments: calleeId or channelName is missing.");
     throw new functions.https.HttpsError(
       "invalid-argument",
-      'The function must be called with "calleeId" and "channelName".' // SỬA LỖI CÚ PHÁP
+      '''The function must be called with "calleeId" and "channelName".'''
     );
   }
 
@@ -142,11 +142,11 @@ exports.sendCallNotification = functions.https.onCall(async (data, context) => {
     const expirationTimeInSeconds = 3600;
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
-    const callToken = RtcTokenBuilder.buildTokenWithUid(
+    const callToken = RtcTokenBuilder.build(
         APP_ID,
         APP_CERTIFICATE,
         channelName,
-        0, // uid = 0 để bất kỳ ai cũng có thể tham gia
+        "0", // uid = "0" để bất kỳ ai cũng có thể tham gia
         RtcRole.PUBLISHER,
         privilegeExpiredTs
     );

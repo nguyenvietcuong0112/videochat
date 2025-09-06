@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../../shared/services/auth_service.dart';
 import '../../../shared/services/firestore_service.dart';
+import '../../../shared/services/notification_service.dart';
 import '../../../shared/providers/theme_provider.dart';
 import '../../video_call/services/matchmaking_service.dart';
 
@@ -22,11 +23,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final FirestoreService _firestoreService = FirestoreService();
   final MatchmakingService _matchmakingService = MatchmakingService();
+  final NotificationService _notificationService = NotificationService();
   
   User? get _currentUser => FirebaseAuth.instance.currentUser;
   StreamSubscription? _callSubscription;
   bool _isSearching = false;
-
 
   @override
   void initState() {
@@ -45,19 +46,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _initialize() async {
     if (_currentUser == null) return;
+    
+    // Handle notifications
+    _notificationService.initialize(_currentUser!.uid);
 
     // Update user status and last seen timestamp
     _firestoreService.updateUserStatus(_currentUser!.uid, true);
-    _firestoreService.updateUserLastSeen(_currentUser!.uid); // Update on initial load
+    _firestoreService.updateUserLastSeen(_currentUser!.uid);
 
+    // Listen for incoming or matched calls
     _callSubscription =
         _matchmakingService.getCallStreamForUser(_currentUser!.uid).listen((call) {
-      if (mounted && call != null) {
-        if (_isSearching) {
+      if (mounted && call != null && call.status == 'created') {
+         if (_isSearching) {
           setState(() {
             _isSearching = false;
           });
         }
+        // Navigate to the call screen
         context.go('/video-call', extra: call);
       }
     });
@@ -67,11 +73,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (_currentUser == null) return;
+    
     if (state == AppLifecycleState.resumed) {
       _firestoreService.updateUserStatus(_currentUser!.uid, true);
-      _firestoreService.updateUserLastSeen(_currentUser!.uid); // Update when app is resumed
-    } else {
-      if (_isSearching) {
+      _firestoreService.updateUserLastSeen(_currentUser!.uid); 
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+       if (_isSearching) {
         _cancelRandomChat();
       }
       _firestoreService.updateUserStatus(_currentUser!.uid, false);
@@ -83,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _callSubscription?.cancel();
     if (_isSearching && _currentUser != null) {
-      _matchmakingService.leaveWaitingPool(_currentUser!.uid);
+      _matchmakingService.cancelMatchmaking(_currentUser!.uid);
     }
     if (_currentUser != null) {
       _firestoreService.updateUserStatus(_currentUser!.uid, false);
@@ -96,139 +103,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _isSearching = true;
     });
-    _matchmakingService.joinWaitingPool(
+    // Use the updated matchmaking service method
+    _matchmakingService.findOrStartMatch(
       _currentUser!.uid,
       _currentUser!.displayName ?? 'Anonymous User',
     );
   }
 
   void _cancelRandomChat() {
-    if (_currentUser == null) return;
+    if (_currentUser == null || !_isSearching) return;
     setState(() {
       _isSearching = false;
     });
-    _matchmakingService.leaveWaitingPool(_currentUser!.uid);
+    // Use the updated matchmaking service method
+    _matchmakingService.cancelMatchmaking(_currentUser!.uid);
   }
   
-  // ... build methods remain the same ...
-
-  Widget _buildSearchingUI() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
-        ),
-        const SizedBox(height: 40),
-        Text(
-          'Finding a stranger...',
-          style: GoogleFonts.oswald(
-            fontSize: 28,
-            fontWeight: FontWeight.w500,
-            color: Theme.of(context).colorScheme.onBackground,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          'Please wait a moment.',
-          style: GoogleFonts.roboto(
-            fontSize: 16,
-            color: Theme.of(context).colorScheme.onBackground.withOpacity(0.7),
-          ),
-        ),
-        const SizedBox(height: 60),
-        ElevatedButton.icon(
-          icon: const Icon(Icons.cancel_outlined),
-          label: const Text('Cancel'),
-          onPressed: _cancelRandomChat,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.redAccent.withOpacity(0.8),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(30),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIdleUI() {
-    final theme = Theme.of(context);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.connect_without_contact, size: 120, color: Colors.white70),
-        const SizedBox(height: 20),
-        Text(
-          'Ready to Connect?',
-          style: GoogleFonts.oswald(
-            fontSize: 42,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            shadows: [
-              const Shadow(
-                blurRadius: 10.0,
-                color: Colors.black38,
-                offset: Offset(2.0, 2.0),
-              ),
-            ],
-          ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 15),
-        Text(
-          'Tap the button below to start a random video chat.',
-          textAlign: TextAlign.center,
-          style: GoogleFonts.roboto(fontSize: 18, color: Colors.white.withOpacity(0.8)),
-        ),
-        const SizedBox(height: 60),
-        _buildGlowButton(),
-      ],
-    );
-  }
-
-  Widget _buildGlowButton() {
-    final theme = Theme.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        boxShadow: [
-          BoxShadow(
-            color: theme.colorScheme.primary.withOpacity(0.6),
-            blurRadius: 25,
-            spreadRadius: 2,
-            offset: const Offset(0, 5),
-          ),
-          BoxShadow(
-            color: Colors.white.withOpacity(0.2),
-            blurRadius: 30,
-            spreadRadius: 5,
-            offset: const Offset(0, 10),
-          )
-        ],
-        borderRadius: BorderRadius.circular(50),
-      ),
-      child: ElevatedButton.icon(
-        icon: const Icon(Icons.video_call_rounded, size: 28),
-        label: Text(
-          'Start Random Chat',
-          style: GoogleFonts.roboto(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        onPressed: _startRandomChat,
-        style: ElevatedButton.styleFrom(
-          foregroundColor: Colors.white,
-          backgroundColor: theme.colorScheme.primary,
-          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(50),
-          ),
-          elevation: 10, // Inner shadow
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -289,6 +179,122 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.all(24.0),
             child: _isSearching ? _buildSearchingUI() : _buildIdleUI(),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchingUI() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+        ),
+        const SizedBox(height: 40),
+        Text(
+          'Finding a stranger...',
+          style: GoogleFonts.oswald(
+            fontSize: 28,
+            fontWeight: FontWeight.w500,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Please wait a moment.',
+          style: GoogleFonts.roboto(
+            fontSize: 16,
+            color: Theme.of(context).colorScheme.onSurface.withAlpha((255 * 0.7).round()),
+          ),
+        ),
+        const SizedBox(height: 60),
+        ElevatedButton.icon(
+          icon: const Icon(Icons.cancel_outlined),
+          label: const Text('Cancel'),
+          onPressed: _cancelRandomChat,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.redAccent.withAlpha((255 * 0.8).round()),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(30),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIdleUI() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.connect_without_contact, size: 120, color: Colors.white70),
+        const SizedBox(height: 20),
+        Text(
+          'Ready to Connect?',
+          style: GoogleFonts.oswald(
+            fontSize: 42,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            shadows: [
+              const Shadow(
+                blurRadius: 10.0,
+                color: Colors.black38,
+                offset: Offset(2.0, 2.0),
+              ),
+            ],
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 15),
+        Text(
+          'Tap the button below to start a random video chat.',
+          textAlign: TextAlign.center,
+          style: GoogleFonts.roboto(fontSize: 18, color: Colors.white.withAlpha((255 * 0.8).round())),
+        ),
+        const SizedBox(height: 60),
+        _buildGlowButton(),
+      ],
+    );
+  }
+
+  Widget _buildGlowButton() {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: theme.colorScheme.primary.withAlpha((255 * 0.6).round()),
+            blurRadius: 25,
+            spreadRadius: 2,
+            offset: const Offset(0, 5),
+          ),
+          BoxShadow(
+            color: Colors.white.withAlpha((255 * 0.2).round()),
+            blurRadius: 30,
+            spreadRadius: 5,
+            offset: const Offset(0, 10),
+          )
+        ],
+        borderRadius: BorderRadius.circular(50),
+      ),
+      child: ElevatedButton.icon(
+        icon: const Icon(Icons.video_call_rounded, size: 28),
+        label: Text(
+          'Start Random Chat',
+          style: GoogleFonts.roboto(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        onPressed: _startRandomChat,
+        style: ElevatedButton.styleFrom(
+          foregroundColor: Colors.white,
+          backgroundColor: theme.colorScheme.primary,
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(50),
+          ),
+          elevation: 10, // Inner shadow
         ),
       ),
     );

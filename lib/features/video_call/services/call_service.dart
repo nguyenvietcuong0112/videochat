@@ -1,17 +1,20 @@
 
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-
-import '../models/call_model.dart';
+import 'package:myapp/features/video_call/models/call_model.dart';
 
 class CallService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   late final CollectionReference _callCollection = _firestore.collection('calls');
   late final CollectionReference _userCollection = _firestore.collection('users');
+  late final CollectionReference _reportsCollection = _firestore.collection('reports');
 
   Future<void> endCall(Call call) async {
     try {
+      // Instead of deleting, we update the status.
+      // This allows listeners to react to the 'ended' state gracefully.
+      await _callCollection.doc(call.channelId).update({'status': 'ended'});
+      
       final duration = DateTime.now().difference(call.createdAt.toDate()).inSeconds;
       
       // Add to each participant's history
@@ -19,10 +22,8 @@ class CallService {
         await addCallToHistory(userId, call, duration);
       }
 
-      await _callCollection.doc(call.channelId).delete();
     } catch (e) {
       // Handle error, e.g., log it
-      print('Error ending call and saving history: $e');
     }
   }
   
@@ -47,10 +48,19 @@ class CallService {
     return _callCollection.doc(channelId).snapshots();
   }
   
-  Future<void> reportUser({required String reporterId, required String reportedUserId, required String callId}) async {
+  Future<void> reportUser({required String reporterId, required String reportedUserId, required String callId, String reason = 'No reason provided'}) async {
+    // Create a new report document
+    await _reportsCollection.add({
+      'reporterId': reporterId,
+      'reportedUserId': reportedUserId,
+      'callId': callId,
+      'reason': reason,
+      'timestamp': FieldValue.serverTimestamp(),
+      'status': 'pending', // e.g., pending, reviewed, resolved
+    });
+
+    // Also block the user as part of the report action
     await blockUser(currentUserId: reporterId, blockedUserId: reportedUserId);
-    // You might want to add more sophisticated reporting logic here, 
-    // like saving a report to a separate collection.
   }
 
   Future<void> blockUser({required String currentUserId, required String blockedUserId}) async {

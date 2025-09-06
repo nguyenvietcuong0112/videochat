@@ -1,43 +1,24 @@
-# Flutter/Dart specific
-.dart_tool/
-.packages
-build/
-*.DS_Store
-*.g.dart
-*.freezed.dart
-/ios/Pods/
-/ios/Flutter/App.framework
-/ios/Flutter/engine
-/ios/Flutter/flutter_assets
-/ios/.symlinks/
-/ios/Runner/GeneratedPluginRegistrant.h
-/ios/Runner/GeneratedPluginRegistrant.m
-/ios/Runner.xcworkspace/
-/ios/Runner.xcodeproj/project.xcworkspace/
-/ios/Runner.xcodeproj/xcuserdata/
-android/app/src/main/assets/flutter_assets/
-android/.gradle/
-android/local.properties
-android/app/build/
-.metadata
 
-# Common
-node_modules/
-dist/
-*.class
-*.py[cod]
+# General
+.DS_Store
+.idea
+.vscode/
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub/
+.pub_cache/
+
+# Firebase
+.firebase/
+
+# Node.js (for Cloud Functions)
+videochat/node_modules/
+videochat/package-lock.json
+npm-debug.log
+
+# Logs
 *.log
-*.jar
-target/
-.idea/
-TEST*.xml
-Thumbs.db
-*.app
-*.exe
-*.war
-*.mp4
-*.tiff
-*.avi
-*.flv
-*.mov
-*.wmv

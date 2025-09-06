@@ -2,7 +2,7 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:stranger_chat/shared/services/notification_service.dart';
+import 'package:myapp/shared/services/notification_service.dart';
 
 class AuthService with ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -24,6 +24,14 @@ class AuthService with ChangeNotifier {
       await _notificationService.initialize(user.uid);
     } 
     notifyListeners();
+  }
+
+  Future<UserCredential> signInWithEmail(String email, String password) async {
+    return await _auth.signInWithEmailAndPassword(email: email, password: password);
+  }
+
+  Future<UserCredential> signUpWithEmail(String email, String password) async {
+    return await _auth.createUserWithEmailAndPassword(email: email, password: password);
   }
 
   Future<void> signOut() async {

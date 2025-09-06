@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import '../../../shared/services/auth_service.dart';
 
 class SignInScreen extends StatefulWidget {
@@ -15,7 +16,6 @@ class _SignInScreenState extends State<SignInScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _displayNameController = TextEditingController(); // Controller cho tên hiển thị
-  final _authService = AuthService();
 
   bool _isLogin = true;
   bool _isLoading = false;
@@ -28,30 +28,26 @@ class _SignInScreenState extends State<SignInScreen> {
         _errorMessage = '';
       });
 
+      final authService = Provider.of<AuthService>(context, listen: false);
+
       try {
-        User? user;
         if (_isLogin) {
-          user = await _authService.signInWithEmail(
+          await authService.signInWithEmail(
             _emailController.text.trim(),
             _passwordController.text.trim(),
           );
         } else {
-          user = await _authService.signUpWithEmail(
+          await authService.signUpWithEmail(
             _emailController.text.trim(),
             _passwordController.text.trim(),
-            _displayNameController.text.trim(), // Truyền tên hiển thị
           );
         }
-
-        if (user == null) {
-          throw FirebaseAuthException(
-              code: 'auth-failed', message: 'Đăng nhập hoặc đăng ký thất bại.');
-        }
-
       } on FirebaseAuthException catch (e) {
-        setState(() {
-          _errorMessage = e.message ?? 'Đã có lỗi xảy ra.';
-        });
+        if (mounted) {
+          setState(() {
+            _errorMessage = e.message ?? 'Đã có lỗi xảy ra.';
+          });
+        }
       } finally {
         if (mounted) {
           setState(() {

@@ -4,7 +4,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'firebase_options.dart';
 import 'features/auth/screens/signin_screen.dart';
@@ -13,7 +12,7 @@ import 'features/video_call/screens/video_call_screen.dart';
 import 'features/call_history/screens/call_history_screen.dart';
 import 'features/video_call/models/call_model.dart';
 import 'shared/providers/theme_provider.dart';
-import 'shared/services/auth_service.dart'; 
+import 'shared/services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,7 +38,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
 
-    final GoRouter _router = GoRouter(
+    final GoRouter router = GoRouter(
       routes: [
         GoRoute(
           path: '/',
@@ -72,14 +71,15 @@ class MyApp extends StatelessWidget {
       redirect: (BuildContext context, GoRouterState state) {
         final isAuthenticated = authService.user != null;
         final isSigningIn = state.matchedLocation == '/signin';
+        final isRoot = state.matchedLocation == '/';
 
-        // If user is not authenticated and not trying to sign in, redirect to signin
+        // If user is not authenticated and not at signin, go to signin
         if (!isAuthenticated && !isSigningIn) {
           return '/signin';
         }
 
-        // If user is authenticated and tries to go to signin, redirect to home
-        if (isAuthenticated && isSigningIn) {
+        // If user is authenticated and is at signin or root, go to home
+        if (isAuthenticated && (isSigningIn || isRoot)) {
           return '/home';
         }
 
@@ -104,7 +104,7 @@ class MyApp extends StatelessWidget {
         brightness: Brightness.light,
       ),
       textTheme: appTextTheme,
-       elevatedButtonTheme: ElevatedButtonThemeData(
+      elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           foregroundColor: Colors.white,
           backgroundColor: primarySeedColor,
@@ -140,7 +140,7 @@ class MyApp extends StatelessWidget {
           theme: lightTheme,
           darkTheme: darkTheme,
           themeMode: themeProvider.themeMode,
-          routerConfig: _router,
+          routerConfig: router,
           debugShowCheckedModeBanner: false,
         );
       },
@@ -153,7 +153,6 @@ class AuthWrapper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // This widget now simply shows a loading spinner while the redirect logic happens.
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }

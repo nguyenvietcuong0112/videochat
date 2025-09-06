@@ -2,7 +2,6 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -12,26 +11,15 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../../shared/services/firestore_service.dart';
 import '../models/call_model.dart';
 import '../models/chat_message_model.dart';
-import '../services/agora_service.dart';
 import '../services/call_service.dart';
-
-
-// Enum for network quality
-enum NetworkQuality {
-  excellent,
-  good,
-  poor,
-  bad,
-  unknown,
-}
 
 class VideoCallScreen extends StatefulWidget {
   final Call call;
 
-  const VideoCallScreen({Key? key, required this.call}) : super(key: key);
+  const VideoCallScreen({super.key, required this.call});
 
   @override
-  _VideoCallScreenState createState() => _VideoCallScreenState();
+  State<VideoCallScreen> createState() => _VideoCallScreenState();
 }
 
 class _VideoCallScreenState extends State<VideoCallScreen> {
@@ -39,10 +27,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late final RtcEngine _engine;
-  late final AgoraRtmService _rtmService;
 
   StreamSubscription? _callStreamSubscription;
-  StreamSubscription? _rtmMessageSubscription;
 
   String? _remoteUserName;
   String? _remoteUserAvatar;
@@ -61,9 +47,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  NetworkQuality _localNetworkQuality = NetworkQuality.unknown;
-  NetworkQuality _remoteNetworkQuality = NetworkQuality.unknown;
-
   String get _currentUserId => _auth.currentUser!.uid;
   String get _otherUserId => widget.call.participants.firstWhere((id) => id != _currentUserId);
 
@@ -71,7 +54,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void initState() {
     super.initState();
     _initAgora();
-    _initAgoraRtm();
     _listenToCallChanges();
     _fetchUsersInfo();
   }
@@ -94,10 +76,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     await [Permission.camera, Permission.microphone].request();
 
     _engine = createAgoraRtcEngine();
-    await _engine.initialize(const RtcEngineContext(
-      appId: '12f3721389824634afc36132b35d33a7', // Replace with your Agora App ID
-      channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
-    ));
+    await _engine.initialize(const RtcEngineContext(appId: '12f3721389824634afc36132b35d33a7'));
 
     _engine.registerEventHandler(
       RtcEngineEventHandler(
@@ -114,72 +93,28 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           setState(() => _remoteUid = null);
           _handleCallEnded();
         },
-         onRtcStats: (RtcConnection connection, RtcStats stats) {
-          if (mounted) {
-            setState(() {
-              _localNetworkQuality = _getNetworkQuality(stats.txPacketLossRate?.toDouble() ?? 0.0);
-            });
-          }
-        },
-        onRemoteVideoStats: (RtcConnection connection, RemoteVideoStats stats) {
-          if (mounted) {
-            setState(() {
-              _remoteNetworkQuality = _getNetworkQuality(stats.packetLossRate.toDouble());
-            });
-          }
+        onConnectionStateChanged: (RtcConnection connection, ConnectionStateType state, ConnectionChangedReasonType reason) {
+            if (reason == ConnectionChangedReasonType.connectionChangedLeaveChannel) {
+                 _handleCallEnded();
+            }
         },
       ),
     );
-
+    
     await _engine.enableVideo();
     await _engine.startPreview();
+
+    ChannelMediaOptions options = const ChannelMediaOptions(
+        clientRoleType: ClientRoleType.clientRoleBroadcaster,
+        channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+    );
+
     await _engine.joinChannel(
       token: widget.call.agoraToken,
       channelId: widget.call.channelId,
-      uid: 0, // 0 means Agora will assign a UID
-      options: const ChannelMediaOptions(clientRoleType: ClientRoleType.clientRoleBroadcaster),
+      uid: 0, // Local user uses UID 0
+      options: options,
     );
-  }
-
-   Future<void> _initAgoraRtm() async {
-    _rtmService = AgoraRtmService(appId: '12f3721389824634afc36132b35d33a7'); // Use the same App ID
-    await _rtmService.initialize();
-
-    // Get RTM token (can be the same as RTC token for simplicity)
-    final rtmToken = await _rtmService.getToken(widget.call.channelId);
-    
-    await _rtmService.login(rtmToken, _currentUserId);
-    await _rtmService.joinChannel(widget.call.channelId);
-
-    _rtmMessageSubscription = _rtmService.onMessageReceived.listen((message) {
-        // The message format will be "uid:message_text"
-        final parts = message.split(':');
-        if (parts.length >= 2) {
-            final uid = parts.first;
-            final text = parts.sublist(1).join(':');
-            final newChatMessage = ChatMessage(uid: uid, text: text, timestamp: DateTime.now());
-
-            if(mounted){
-                setState(() {
-                    _messages.add(newChatMessage);
-                });
-                _scrollToBottom();
-            }
-        }
-    });
-  }
-
-
-  NetworkQuality _getNetworkQuality(double packetLossRate) {
-    if (packetLossRate < 2) {
-      return NetworkQuality.excellent;
-    } else if (packetLossRate < 5) {
-      return NetworkQuality.good;
-    } else if (packetLossRate < 10) {
-      return NetworkQuality.poor;
-    } else {
-      return NetworkQuality.bad;
-    }
   }
 
   void _listenToCallChanges() {
@@ -196,26 +131,32 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (mounted && !_callEnded) {
       setState(() {
         _callEnded = true;
-        _isChatVisible = false; // Hide chat on call end
+        _isChatVisible = false;
       });
-      _engine.leaveChannel();
     }
   }
 
+  Future<void> _disposeAgora() async {
+      await _engine.leaveChannel();
+      await _engine.release();
+  }
+
   Future<void> _leaveAndGoHome() async {
+    await _disposeAgora();
     if (mounted) context.go('/');
   }
 
   Future<void> _findNewMatch() async {
+    await _disposeAgora();
     if (mounted) context.go('/', extra: {'find_new_match': true});
   }
 
   @override
   void dispose() {
+    if (!_callEnded) {
+        _disposeAgora();
+    }
     _callStreamSubscription?.cancel();
-    _rtmMessageSubscription?.cancel();
-    _engine.release();
-    _rtmService.dispose();
     _chatController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -224,9 +165,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void _sendMessage() {
     final messageText = _chatController.text.trim();
     if (messageText.isNotEmpty) {
-        // Prepend the UID to the message
-        final messageWithUid = '$_currentUserId:$messageText';
-        _rtmService.sendMessage(messageWithUid);
         _chatController.clear();
         _scrollToBottom();
     }
@@ -245,7 +183,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(), // Dismiss keyboard
+      onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
@@ -282,16 +220,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       right: 10,
       top: 10,
       child: GestureDetector(
-        onTap: () {}, // Prevent taps from passing through to the background
+        onTap: () {},
         child: ClipRRect(
           borderRadius: BorderRadius.circular(20),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.4),
+                color: Colors.black.withAlpha((255 * 0.4).round()),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withOpacity(0.2))
+                border: Border.all(color: Colors.white.withAlpha((255 * 0.2).round()))
               ),
               child: Column(
                 children: [
@@ -338,7 +276,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             margin: const EdgeInsets.symmetric(vertical: 4),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: isLocalUser ? Theme.of(context).colorScheme.primary.withOpacity(0.8) : Colors.grey.shade800.withOpacity(0.8),
+              color: isLocalUser ? Theme.of(context).colorScheme.primary.withAlpha((255 * 0.8).round()) : Colors.grey.shade800.withAlpha((255 * 0.8).round()),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Text(message.text, style: GoogleFonts.roboto(color: Colors.white)),
@@ -361,7 +299,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 hintText: 'Type a message...',
                 hintStyle: GoogleFonts.roboto(color: Colors.white54),
                 filled: true,
-                fillColor: Colors.black.withOpacity(0.5),
+                fillColor: Colors.black.withAlpha((255 * 0.5).round()),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(30),
                   borderSide: BorderSide.none,
@@ -387,12 +325,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
 
   Widget _callEndedOverlay() {
-    // ... (rest of the code is unchanged) ...
-    return ClipRect(
+    return ClipRRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          color: Colors.black.withOpacity(0.6),
+          color: Colors.black.withAlpha((255 * 0.6).round()),
           child: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -439,7 +376,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         userName: _localUserName,
         avatarUrl: _localUserAvatar,
         videoDisabled: _localUserVideoDisabled,
-        quality: _localNetworkQuality,
       );
   }
 
@@ -449,16 +385,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         isLocal: false,
         isJoined: true,
         view: AgoraVideoView(
-          controller: VideoViewController.remote(
-            rtcEngine: _engine,
-            canvas: VideoCanvas(uid: _remoteUid!),
-            connection: RtcConnection(channelId: widget.call.channelId),
-          ),
+            controller: VideoViewController.remote(
+                rtcEngine: _engine, 
+                canvas: VideoCanvas(uid: _remoteUid!),
+                connection: RtcConnection(channelId: widget.call.channelId),
+            ),
         ),
         userName: _remoteUserName,
         avatarUrl: _remoteUserAvatar,
         videoDisabled: false, 
-        quality: _remoteNetworkQuality,
       );
     } else {
       return Center(
@@ -486,7 +421,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     required String? userName,
     required String? avatarUrl,
     required bool videoDisabled,
-    required NetworkQuality quality,
   }) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(isLocal ? 16 : 0),
@@ -520,7 +454,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
+                      color: Colors.black.withAlpha((255 * 0.5).round()),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -531,8 +465,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                _buildConnectionQualityIndicator(quality),
               ],
             ),
           )
@@ -541,46 +473,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
-  Widget _buildConnectionQualityIndicator(NetworkQuality quality) {
-    IconData icon;
-    Color color;
-    switch (quality) {
-      case NetworkQuality.excellent:
-        icon = Icons.signal_cellular_4_bar_rounded;
-        color = Colors.green;
-        break;
-      case NetworkQuality.good:
-        icon = Icons.signal_cellular_3_bar_rounded;
-        color = Colors.lightGreen;
-        break;
-      case NetworkQuality.poor:
-        icon = Icons.signal_cellular_2_bar_rounded;
-        color = Colors.orange;
-        break;
-      case NetworkQuality.bad:
-        icon = Icons.signal_cellular_1_bar_rounded;
-        color = Colors.red;
-        break;
-      default:
-        icon = Icons.signal_cellular_off_rounded;
-        color = Colors.grey;
-    }
-    return Icon(icon, color: color, size: 20);
-  }
-
   Widget _buildAvatar({String? avatarUrl, required double size}) {
       if (avatarUrl != null && avatarUrl.isNotEmpty) {
-          return CircleAvatar(
-              radius: size / 2,
-              backgroundImage: NetworkImage(avatarUrl),
-              backgroundColor: Colors.grey.shade800,
-          );
+          return CircleAvatar(radius: size / 2, backgroundImage: NetworkImage(avatarUrl), backgroundColor: Colors.grey.shade800);
       }
-      return CircleAvatar(
-          radius: size / 2,
-          backgroundColor: Colors.grey.shade600,
-          child: Icon(Icons.person, size: size * 0.7, color: Colors.white70),
-      );
+      return CircleAvatar(radius: size / 2, backgroundColor: Colors.grey.shade600, child: Icon(Icons.person, size: size * 0.7, color: Colors.white70));
   }
 
   Widget _toolbar() {
@@ -589,9 +486,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       child: Container(
         margin: const EdgeInsets.only(bottom: 30, left: 20, right: 20),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.3),
+          color: Colors.black.withAlpha((255 * 0.3).round()),
           borderRadius: BorderRadius.circular(50),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
+          border: Border.all(color: Colors.white.withAlpha((255 * 0.2).round())),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(50),
@@ -603,9 +500,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _buildToolbarButton(_onToggleMute, _localUserMuted ? Icons.mic_off : Icons.mic, _localUserMuted),
-                   _buildToolbarButton(() {
-                    setState(() => _isChatVisible = !_isChatVisible);
-                  }, Icons.chat_bubble_outline_rounded, _isChatVisible),
+                   _buildToolbarButton(() => setState(() => _isChatVisible = !_isChatVisible), Icons.chat_bubble_outline_rounded, _isChatVisible),
                   _buildEndCallButton(),
                   _buildToolbarButton(_onToggleVideo, _localUserVideoDisabled ? Icons.videocam_off : Icons.videocam, _localUserVideoDisabled),
                   _buildMoreOptionsButton(),
@@ -621,44 +516,29 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   Widget _buildMoreOptionsButton() {
     return IconButton(
         icon: const Icon(Icons.more_vert, color: Colors.white, size: 28),
-        onPressed: () {
-            showModalBottomSheet(
-                context: context,
-                backgroundColor: Colors.transparent,
-                builder: (context) => _buildBottomSheet(),
-            );
-        },
+        onPressed: () => showModalBottomSheet(context: context, backgroundColor: Colors.transparent, builder: (context) => _buildBottomSheet()),
     );
   }
 
   Widget _buildBottomSheet() {
     return ClipRRect(
-        borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
-        ),
+        borderRadius: const BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
         child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
             child: Container(
-                color: Colors.grey.shade900.withOpacity(0.7),
+                color: Colors.grey.shade900.withAlpha((255 * 0.7).round()),
                 child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                         ListTile(
                             leading: const Icon(Icons.report_problem_outlined, color: Colors.white),
                             title: Text('Report User', style: GoogleFonts.roboto(color: Colors.white)),
-                            onTap: () {
-                                Navigator.of(context).pop();
-                                _reportUser();
-                            },
+                            onTap: () { Navigator.of(context).pop(); _reportUser(); },
                         ),
                         ListTile(
                             leading: const Icon(Icons.block, color: Colors.white),
                             title: Text('Block User', style: GoogleFonts.roboto(color: Colors.white)),
-                            onTap: () {
-                                Navigator.of(context).pop();
-                                _blockUser();
-                            },
+                            onTap: () { Navigator.of(context).pop(); _blockUser(); },
                         ),
                         const Divider(color: Colors.white24, height: 1),
                         ListTile(
@@ -675,24 +555,20 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
 
   Future<void> _reportUser() async {
-    final confirm = await _showConfirmationDialog(
-        'Report User', 
-        'Are you sure you want to report this user? This will also block them and end the call.');
+    final confirm = await _showConfirmationDialog('Report User', 'Are you sure you want to report this user? This will also block them and end the call.');
     if (confirm) {
         await _callService.reportUser(reporterId: _currentUserId, reportedUserId: _otherUserId, callId: widget.call.channelId);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('User has been reported. The call will now end.')));
-        _handleCallEnded();
+        await _confirmEndCall(forceEnd: true);
     }
   }
 
   Future<void> _blockUser() async {
-     final confirm = await _showConfirmationDialog(
-        'Block User', 
-        'Are you sure you want to block this user? You won\'t be matched with them again. The call will end.');
+     final confirm = await _showConfirmationDialog('Block User', 'Are you sure you want to block this user? You won\'t be matched with them again. The call will end.');
     if (confirm) {
         await _callService.blockUser(currentUserId: _currentUserId, blockedUserId: _otherUserId);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('User has been blocked. The call will now end.')));
-        _handleCallEnded();
+        await _confirmEndCall(forceEnd: true);
     }
   }
 
@@ -701,7 +577,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       onPressed: onPressed,
       icon: Icon(icon, color: Colors.white, size: 28),
       style: IconButton.styleFrom(
-        backgroundColor: isActive ? Theme.of(context).colorScheme.primary : Colors.black.withOpacity(0.3),
+        backgroundColor: isActive ? Theme.of(context).colorScheme.primary : Colors.black.withAlpha((255 * 0.3).round()),
         padding: const EdgeInsets.all(15),
       ),
     );
@@ -709,7 +585,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Widget _buildEndCallButton() {
     return IconButton(
-      onPressed: _confirmEndCall,
+      onPressed: () => _confirmEndCall(),
       icon: const Icon(Icons.call_end, color: Colors.white, size: 35),
       style: IconButton.styleFrom(
         backgroundColor: Colors.redAccent,
@@ -730,7 +606,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     setState(() {
       _localUserVideoDisabled = !_localUserVideoDisabled;
     });
-    _engine.enableLocalVideo(!_localUserVideoDisabled);
+    _engine.muteLocalVideoStream(_localUserVideoDisabled);
   }
   
   Future<bool> _showConfirmationDialog(String title, String content) async {
@@ -749,7 +625,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       return confirm ?? false;
   }
 
-  Future<void> _confirmEndCall() async {
+  Future<void> _confirmEndCall({bool forceEnd = false}) async {
+      if (forceEnd) {
+          await _callService.endCall(widget.call);
+          _handleCallEnded();
+          return;
+      }
+
       final confirm = await _showConfirmationDialog('End Call?', 'Are you sure you want to end this conversation?');
       if (confirm) {
          await _callService.endCall(widget.call);
